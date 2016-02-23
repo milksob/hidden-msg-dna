@@ -79,7 +79,6 @@ void print_clump(int kmer_idx, int k)
   printf("%s\n", buf);
 }
 
-
 int get_flip(unsigned int flip, unsigned int dmask, unsigned int flipmap)
 {
   int flip_out = flip;
@@ -118,12 +117,11 @@ int get_flip(unsigned int flip, unsigned int dmask, unsigned int flipmap)
   return flip;
 }
 
-static int g_max;
-void inc_neighbours(unsigned int kmer, unsigned int k, unsigned int d, unsigned int *tmap)
+static int gmark;
+void mark_neighbours(unsigned int kmer, unsigned int k, unsigned int d, unsigned int *tmap)
 {
-  ++tmap[kmer];
-  if (tmap[kmer] > g_max)
-    g_max = tmap[kmer];
+  //  print_clump(kmer, k);
+  tmap[kmer] |= gmark;
   unsigned int dstop = 1 << k;
   while (d > 0)
     {
@@ -137,9 +135,9 @@ void inc_neighbours(unsigned int kmer, unsigned int k, unsigned int d, unsigned 
 	    unsigned int flip = get_flip(kmer, dmask, flip_map);
 	    if (flip != kmer)
 	      {
-		++tmap[flip];
-		if (tmap[flip] > g_max)
-		  g_max = tmap[flip];
+		tmap[flip] |= gmark;
+		//       		print_clump(flip, k);
+		//		getchar();
 	      }
 	  }
 	  unsigned int t = dmask | (dmask - 1); 
@@ -152,7 +150,24 @@ void inc_neighbours(unsigned int kmer, unsigned int k, unsigned int d, unsigned 
     }
 }
 
+int calc_distance(int kmer_idx, int pattern_idx, int k)
+{
+  //    print_clump(kmer_idx, k);
+  //    print_clump(pattern_idx, k);
 
+  static int diff;
+  diff = kmer_idx ^ pattern_idx;
+  static const int odd_mask = 0xAAAAAAAA;   //10 10 ... mask
+  static const int even_mask = 0x55555555;  //01 01 ... mask
+
+  diff |= ((diff & odd_mask) >> 1); // OR evens with odds
+  diff &= even_mask; // clear all odds;
+  diff = __builtin_popcount(diff);  // number of different letters
+
+  //    printf("calc_distance: %d\n", diff);
+    //    getchar();
+  return diff;
+}
 
 int main(int argc, char **argv)
 {
@@ -161,54 +176,64 @@ int main(int argc, char **argv)
   char buf[BUF_SIZE];
   int len = read_file(fd, buf, sizeof(buf));
 
-  char *vars = find_line_start(buf, buf + len - 2);
-  int k, d;
-  sscanf(vars, "%d %d", &k, &d);
-  --vars;
-  char *genome = buf;
+  int k;
+  sscanf(buf, "%d",&k);
 
+  char *start = buf;
+  while (*start != '\n')
+    ++start;
+  ++start;
+  
+  init_dict();
 
   size_t tmap_size = pow(4, k) * sizeof(int);
+  //  int *tmap = (int *)malloc(tmap_size);
+  //  memset(tmap, 0, tmap_size);
 
-  int *tmap = (int *)malloc(tmap_size);
-  memset(tmap, 0, tmap_size);
-
-  printf("k = %d, d = %d\n", k, d);
-  init_dict();
-  g_max = 0;
-
-  int idx = 0;
-  char *cp = buf;
+  int kmask = (1 << (2*k)) - 1;  
   int i;
-
-  for (i = 0; i < k; ++i)
+  int median = -1;
+  unsigned min_sum_dist = -1;
+  for (i = 0; i < tmap_size; ++i) // for all kmers
     {
-      idx = (idx << 2) + g_idx_dict[*cp];
-      ++cp;
-    }
-
-  int kmask = (1 << (2*k)) - 1;
-  inc_neighbours(idx, k, d, tmap);
-
-  while (*cp != '\n')
-    {
-      idx = ((idx << 2) & kmask) + g_idx_dict[*cp];
-      inc_neighbours(idx, k, d, tmap);
-      
-      int reverse_idx = (~idx) 
-      //      inc_
-      ++cp;
-    }
-
-
-  for (i = 0; i < tmap_size; ++i)
-    {
-      if (tmap[i] == g_max)
+      char *cp = start;
+      unsigned sum_dist = 0;
+      while (*cp != '\0')
 	{
-	  print_clump(i, k);
+	  int idx = 0;
+	  int j;
+	  for (j = 0; j < k; ++j)
+	    {
+	      if (*cp == '\0')
+		break;
+	      idx = (idx << 2) + g_idx_dict[*cp];
+	      ++cp;
+	    }
+	  if (*cp == '\0')
+	    break;
+
+	  int set_min_dist = calc_distance(i, idx, k);
+	  while (*cp != '\n')
+	    {
+	      idx = ((idx << 2) & kmask) + g_idx_dict[*cp];
+	      int kmer_dist = calc_distance(i, idx, k);
+	      if (kmer_dist < set_min_dist)
+		set_min_dist = kmer_dist;
+	      ++cp;
+	    }
+	  sum_dist += set_min_dist;
+	  ++cp;
+	}
+      if (sum_dist <= min_sum_dist)
+	{
+	  min_sum_dist = sum_dist;
+	  median = i;
+	  //	  printf("min sum %d , ", min_sum_dist);
+	  //	  print_clump(median, k);
 	}
     }
 
-  free(tmap);
+  if (median > 0)
+    print_clump(median, k);
   return 0;
 }
